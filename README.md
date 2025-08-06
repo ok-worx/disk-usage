@@ -15,7 +15,8 @@ Here is an example of what to put in your "*`cloud_init.sh`*"
 ```bash
 #! /bin/bash
 
-export POSTMARK_TOKEN="your_token_here"
+touch /etc/.env
+echo "POSTMARK_TOKEN="your_token_here"" >> /etc/.env
 
 curl https://raw.githubusercontent.com/ok-worx/disk-usage/refs/heads/main/disk_usage.sh > disk_usage.sh 
 chmod +x disk_usage.sh
