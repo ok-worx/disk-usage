@@ -10,4 +10,18 @@ Important! You must have the environment variable **`$POSTMARK_TOKEN`** set befo
 export POSTMARK_TOKEN="your_token_here"
 ```
 
-The `init.sh` is an example of what to put in your "*cloud_init.sh*"
+Here is an example of what to put in your "*`cloud_init.sh`*"
+
+```bash
+#! /bin/bash
+
+export POSTMARK_TOKEN="your_token_here"
+
+curl https://raw.githubusercontent.com/ok-worx/disk-usage/refs/heads/main/disk_usage.sh > disk_usage.sh 
+chmod +x disk_usage.sh
+
+path_to_sh=($(pwd)/disk_usage.sh)
+crontab << EOF
+0 * * * * $path_to_sh
+EOF
+```
