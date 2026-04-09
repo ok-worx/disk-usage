@@ -1,8 +1,6 @@
 #!/bin/bash
 
 FILESYSTEM="/"
-MIN_FREE_PERCENT=10
-MIN_FREE_GB=10
 
 FROM_EMAIL="infra-alerts@okworx.com"
 TO_EMAIL="alert@okworx.com"
@@ -19,31 +17,7 @@ available=$(echo "$df_out" | awk 'NR==2 {print $4}')
 total=$(echo "$df_out" | awk 'NR==2 {print $2}')
 server_name=$(hostname)
 
-# --- Postmark (email) message builders ---
-
-make_postmark_msg(){
-    cat << EOF
-'{
-    "From": "$FROM_EMAIL",
-    "To": "$TO_EMAIL",
-    "Subject": "🚨DISK ALERT🚨 $server_name $usage FULL",
-    "HtmlBody": "disk space low on server $server_name <br> only $usage ($available/$total) available <br> ($(date '+%Y-%m-%d %H:%M:%S'))",
-    "MessageStream": "outbound"
-}'
-EOF
-}
-
-failed_df_postmark(){
-        cat << EOF
-'{
-    "From": "$FROM_EMAIL",
-    "To": "$TO_EMAIL",
-    "Subject": "🚨ALERT SOMETHING WENT MAJORLY WRONG🚨 $server_name",
-    "HtmlBody": "failed to execute df command (output is $(echo $df_out)) <br> on server $server_name <br> ($(date '+%Y-%m-%d %H:%M:%S'))",
-    "MessageStream": "outbound"
-}'
-EOF
-}
+# --- Postmark (email) ---
 
 send_postmark(){
   bash << EOF
@@ -65,34 +39,59 @@ send_seven(){
     -d "$json"
 }
 
-# --- Unified send ---
+# --- Send helpers ---
 
-send_msg(){
-  local postmark_payload="$1"
-  local sms_text="$2"
-
+send_email(){
+  local subject="$1"
+  local body="$2"
   if [[ -n "$POSTMARK_TOKEN" ]]; then
-    send_postmark "$postmark_payload"
-  fi
-
-  if [[ -n "$SEVEN_API_KEY" ]] && [[ -n "$RECIPIENT_PHONE" ]]; then
-    send_seven "$sms_text"
+    local payload="'{\"From\": \"$FROM_EMAIL\", \"To\": \"$TO_EMAIL\", \"Subject\": \"$subject\", \"HtmlBody\": \"$body\", \"MessageStream\": \"outbound\"}'"
+    send_postmark "$payload"
   fi
 }
 
-# sanity check
+send_sms(){
+  local text="$1"
+  if [[ -n "$SEVEN_API_KEY" ]] && [[ -n "$RECIPIENT_PHONE" ]]; then
+    send_seven "$text"
+  fi
+}
+
+# --- Sanity check ---
+
 if [[ "$usage" != *% ]] || [[ "$available" != *G ]] || [[ "$total" != *G ]]; then
-    send_msg \
-      "$(failed_df_postmark)" \
-      "ALERT: df command failed on $server_name (output: $df_out) - $(date '+%Y-%m-%d %H:%M:%S')"
+    send_email \
+      "🚨ALERT SOMETHING WENT MAJORLY WRONG🚨 $server_name" \
+      "failed to execute df command (output is $(echo $df_out)) <br> on server $server_name <br> ($(date '+%Y-%m-%d %H:%M:%S'))"
+    send_sms "CRITICAL: df command failed on $server_name - $(date '+%Y-%m-%d %H:%M:%S')"
+    exit 1
 fi
 
-min_percentage=$((100 - MIN_FREE_PERCENT))
 usage_value=${usage%\%}
-available_value=${available%\G}
+timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
 
-if ((usage_value > min_percentage )) || (( MIN_FREE_GB > available_value )); then
-    send_msg \
-      "$(make_postmark_msg)" \
-      "DISK ALERT: $server_name $usage full - only $available/$total available - $(date '+%Y-%m-%d %H:%M:%S')"
+# --- Staggered alerts: 80% email only, 90%+ email + SMS ---
+
+if (( usage_value >= 98 )); then
+    send_email \
+      "🔴 CRITICAL DISK ALERT 🔴 $server_name ${usage_value}% FULL" \
+      "CRITICAL: disk space on $server_name at ${usage_value}% ($available/$total free) <br> ($timestamp)"
+    send_sms "CRITICAL: $server_name disk ${usage_value}% full - $available/$total free - $timestamp"
+
+elif (( usage_value >= 95 )); then
+    send_email \
+      "🟠 DISK ALERT 🟠 $server_name ${usage_value}% FULL" \
+      "URGENT: disk space on $server_name at ${usage_value}% ($available/$total free) <br> ($timestamp)"
+    send_sms "URGENT: $server_name disk ${usage_value}% full - $available/$total free - $timestamp"
+
+elif (( usage_value >= 90 )); then
+    send_email \
+      "🟡 DISK WARNING 🟡 $server_name ${usage_value}% FULL" \
+      "WARNING: disk space on $server_name at ${usage_value}% ($available/$total free) <br> ($timestamp)"
+    send_sms "WARNING: $server_name disk ${usage_value}% full - $available/$total free - $timestamp"
+
+elif (( usage_value >= 80 )); then
+    send_email \
+      "📀 DISK NOTICE 📀 $server_name ${usage_value}% FULL" \
+      "NOTICE: disk space on $server_name at ${usage_value}% ($available/$total free) <br> ($timestamp)"
 fi
